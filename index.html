@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+
+<html>
+<div id="info">demo page
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/84/three.min.js"></script>
+  <script src="https://threejs.org/examples/js/controls/OrbitControls.js">
+
+
+  </script>
+  <script src="https://jyunming-chen.github.io/tutsplus/js/KeyboardState.js"></script>
+  <script src="https://psychoticvenom.github.io/FSM/state-machine.js"></script>
+  <script src="https://rawgit.com/jyunming-chen/tutsplus/master/js/text2D.js"></script>
+
+<head>
+<style>
+
+#info {
+  position: absolute;
+  top: 0px;
+  width: 100%;
+  padding: 10px;
+  text-align: center;
+  color: #ffff00
+}
+
+body {
+  overflow: hidden;
+}
+
+</style>
+</head>
+
+<body> 
+<script>
+
+var camera, scene, renderer, mesh, controls;
+var raycaster, nameTexture;
+var mouse = new THREE.Vector2();
+var pickables = [];
+var player, hunter;
+var clock = new THREE.Clock();
+var catched = false;
+var cube;
+
+init();
+animate();
+
+function createPlayer() {
+  var avatar = new THREE.Object3D();
+  var mesh = new THREE.Mesh(new THREE.CylinderGeometry(4, 4, 4, 32), new THREE.MeshNormalMaterial());
+  avatar.add(mesh);
+  return avatar;
+}
+
+function Hunter(mesh, pos) {
+  this.pos = new THREE.Vector3(-100, 0, -100);
+  this.mesh = mesh.clone();
+	
+  scene.add(this.mesh);
+  
+  this.mesh.position.copy(this.pos);
+
+  this.vel = new THREE.Vector3();
+  this.force = new THREE.Vector3();
+  this.angle = 0;
+  this.maxSpeed = 60;
+  this.maxForce = 60;
+  this.find = false;
+  this.sight = createSight();
+  this.mesh.add(this.sight);
+  this.sight.position.x = 10.14;
+
+///////////////////////////////////////////////////////////////////
+
+  var SpriteText2D = THREE_Text.SpriteText2D;
+  var textAlign = THREE_Text.textAlign;
+  nameText = new SpriteText2D( 'Hunter' , {
+    align: textAlign.center,
+    font: '20px Courier',
+    fillStyle: '#000000',
+    antialias: true
+  });
+  //sprite.position.set(0, 0, 200);
+  nameText.scale.set(.5, .5, .5);
+  nameText.position.y = 20;
+  
+  this.mesh.add(nameText);  
+  
+////////////////////////////////////////////////////////////////////
+
+  this.fsm = function(){
+  
+    var fsm = StateMachine.create({
+
+      events: [
+		{name: 'start',from: 'none',to: 'Patrol'},
+		{name: 'hunt',from: 'Patrol',to: 'Hunt'},
+		{name: 'patrol',from: 'Hunt',to: 'Patrol'},
+		{name: 'dead',from: 'Hunt',to: 'Over'}
+	  ],
+
+      callbacks: {
+        onbeforestart: function(event, from, to) {},
+        onstart: function(event, from, to) {},
+
+        onbeforehunt: function(event, from, to) {},
+        onbeforepatrol: function(event, from, to) {},
+        onbeforedead: function(event, from, to) {},
+
+        onhunt: function(event, from, to) {},
+        onpatrol: function(event, from, to) {},
+        ondead: function(event, from, to) {},
+
+        onleavehunt: function(event, from, to) {},
+        onleaveratrol: function(event, from, to) {},
+
+        onPatrol: function(event, from, to) {
+          this.nameText.text = 'On patrol';
+        },
+        onHunt: function(event, from, to) {
+          this.nameText.text = 'On hunt';
+        },
+        onOver: function(event, from, to) {}
+      }
+    });
+
+    fsm.start();
+    return fsm;
+  }
+
+//////////////////////////////////////////////////////////////////	
+  
+  this.patrol = function() {
+
+    this.directSightV = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), this.angle).normalize();
+    this.rightSightV = new THREE.Vector3(80, 0, 50).applyAxisAngle(new THREE.Vector3(0, 1, 0), this.angle).normalize();
+    this.leftSightV = new THREE.Vector3(80, 0, -50).applyAxisAngle(new THREE.Vector3(0, 1, 0), this.angle).normalize();
+
+    var distanceV = player.position.clone().sub(this.pos).normalize();
+    var rightSight = this.directSightV.angleTo(this.rightSightV);
+    var leftSight = this.directSightV.angleTo(this.leftSightV);
+
+    if (rightSight > this.directSightV.angleTo(distanceV) ||
+      leftSight > this.directSightV.angleTo(distanceV)) {
+      if (player.position.distanceTo(this.pos) <= 10.14 + 80 + 2) {
+        var ray = new THREE.Raycaster(this.pos, distanceV);
+        var intersects = ray.intersectObjects(cube);
+        if (intersects.length == 0) {
+          this.find = true;
+          console.log(ray);
+          console.log(intersects);
+        }
+      } else
+        this.find = false;
+    } else
+      this.find = false;
+  }
+
+  this.hunt = function(dt) {
+
+    if (this.find) {
+      if(this.fsm.current != 'Hunt')
+		this.fsm.hunt();
+      this.force =
+        player.position.clone().sub(this.pos).setLength(this.maxSpeed).sub(this.vel);
+
+      // force clamping
+      if (this.force.length() > this.maxForce)
+        this.force.setLength(this.maxForce);
+      this.vel.add(this.force.clone().multiplyScalar(dt));
+
+      // velocity clamping
+      if (this.vel.length() > this.maxSpeed)
+        this.vel.setLength(this.maxSpeed);
+      this.pos.add(this.vel.clone().multiplyScalar(dt));
+
+      if (this.vel.length() > 0.001) {
+        this.angle = Math.atan2(-this.vel.z, this.vel.x);
+      }
+      this.mesh.position.copy(this.pos);
+      this.mesh.rotation.y = this.angle;
+
+      // catch handling
+      if (this.pos.distanceTo(player.position) <= 4) {
+        catched = true;
+        gameStart();
+      }
+
+    } 
+    else {
+	  if(this.fsm.current == 'Hunt')
+		this.fsm.patrol();
+      this.vel = new THREE.Vector3();
+      this.force = new THREE.Vector3();
+    }
+  }
+}
+
+function createHunter() {
+
+  geometry = new THREE.Geometry();
+  geometry.vertices.push(
+    new THREE.Vector3(0, 0, -4),
+    new THREE.Vector3(0, 0, 4),
+    new THREE.Vector3(10.14, 0, 0),
+    new THREE.Vector3(0, 4, 0)
+  );
+  geometry.faces.push(
+    new THREE.Face3(3, 1, 2),
+    new THREE.Face3(3, 2, 0),
+    new THREE.Face3(3, 0, 1),
+    new THREE.Face3(1, 0, 2)
+  );
+  geometry.computeBoundingSphere();
+  geometry.computeFaceNormals();
+  geometry.computeVertexNormals();
+
+  var material = new THREE.MeshNormalMaterial();
+  mesh = new THREE.Mesh(geometry, material);
+	
+  hunter = new Hunter(mesh, new THREE.Vector3());
+}
+
+function createSight() {
+
+  var geometry = new THREE.CircleGeometry(80, 32, 5.65, 1.2);
+  var material = new THREE.MeshBasicMaterial({
+    color: 0x000000
+  });
+  var mesh = new THREE.Mesh(geometry, material);
+  mesh.rotation.x = -Math.PI / 2;
+  return mesh;
+
+}
+
+function gameStart() {
+
+  if (catched) {
+    scene.remove(player.mesh);
+    scene.remove(player);
+    scene.remove(hunter.mesh);
+    scene.remove(hunter);
+    catched = false;
+  }
+  player = createPlayer();
+  scene.add(player);
+
+  createHunter();
+}
+
+function init() {
+  scene = new THREE.Scene();
+
+  camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 1, 1000);
+  camera.position.set(180, 70, 180);
+  scene.add(camera);
+
+  var gridXZ = new THREE.GridHelper(300, 30, 'red', 'white');
+  scene.add(gridXZ);
+
+  var axes = new THREE.AxisHelper(25);
+  scene.add(axes);
+
+  renderer = new THREE.WebGLRenderer();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setClearColor(0x888888);
+
+  controls = new THREE.OrbitControls(camera, renderer.domElement);
+
+  document.body.appendChild(renderer.domElement);
+  ////////////////////////////////////////////////////////////////////////
+  ground = new THREE.Mesh(new THREE.PlaneGeometry(300, 300), new THREE.MeshBasicMaterial({
+    visible: false
+  }));
+  scene.add(ground);
+  ground.rotation.x = -Math.PI / 2;
+  pickables = [ground];
+
+  raycaster = new THREE.Raycaster();
+  document.addEventListener('mousedown', onDocumentMouseDown, false);
+
+  gameStart();
+}
+
+function onDocumentMouseDown(event) {
+
+  // PICKING DETAILS: 
+  // convert mouse.xy = [-1,1]^2 (NDC)
+  // unproject (mouse.xy, 1) to a point on the far plane (in world coordinate)
+  // set raycaster (origin, direction)
+  // find intersection objects, (closest first) 
+  // each record as
+  // [ { distance, point, face, faceIndex, object }, ... ]
+
+  event.preventDefault();
+  mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+  // find intersections
+  raycaster.setFromCamera(mouse, camera);
+  var intersects = raycaster.intersectObjects(pickables);
+  if (intersects.length > 0) {
+    player.position.copy(intersects[0].point);
+    player.position.y = 2;
+  }
+
+}
+
+function animate() {
+  if (!catched) {
+    var dt = clock.getDelta();
+    hunter.patrol();
+    hunter.hunt(dt);
+  }
+  controls.update();
+  requestAnimationFrame(animate);
+  render();
+}
+
+function render() {
+  renderer.render(scene, camera);
+}
+
+</script>
+</body>
+
+</html>
